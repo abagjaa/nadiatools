@@ -1,0 +1,2 @@
+import { NextResponse } from 'next/server';import { cookies } from 'next/headers';import { jwtVerify } from 'jose';
+export async function GET(){const token=(await cookies()).get('nadia_session')?.value,secret=process.env.AUTH_SESSION_SECRET;if(!token||!secret)return NextResponse.json({error:'Tidak login.'},{status:401});try{const{payload}=await jwtVerify(token,new TextEncoder().encode(secret));return NextResponse.json({id:payload.sub,name:payload.name,role:payload.role,access:payload.access})}catch{return NextResponse.json({error:'Sesi berakhir.'},{status:401})}}

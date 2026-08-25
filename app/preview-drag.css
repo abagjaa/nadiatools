@@ -1,0 +1,10 @@
+.canvasPane {
+  cursor: grab;
+  user-select: none;
+}
+.canvasPane.dragging {
+  cursor: grabbing;
+}
+.canvasPane.dragging canvas {
+  pointer-events: none;
+}

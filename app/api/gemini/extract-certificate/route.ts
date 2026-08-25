@@ -1,0 +1,90 @@
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { jwtVerify } from "jose";
+import { GoogleGenAI } from "@google/genai";
+
+async function authorized() {
+  const token = (await cookies()).get("nadia_session")?.value;
+  const secret = process.env.AUTH_SESSION_SECRET;
+  if (!token || !secret) return false;
+  try {
+    await jwtVerify(token, new TextEncoder().encode(secret));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function POST(request: Request) {
+  if (!(await authorized()))
+    return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey)
+    return NextResponse.json(
+      {
+        error: "Gemini API key belum diatur oleh Developer.",
+        code: "GEMINI_NOT_CONFIGURED",
+      },
+      { status: 503 },
+    );
+  try {
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!(file instanceof File))
+      return NextResponse.json(
+        { error: "File tidak ditemukan." },
+        { status: 400 },
+      );
+    if (file.size > 20 * 1024 * 1024)
+      return NextResponse.json(
+        { error: "File melebihi batas sementara 20 MB." },
+        { status: 413 },
+      );
+    const data = Buffer.from(await file.arrayBuffer()).toString("base64");
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+      contents: [
+        {
+          text: "Baca sertifikat SLO/NIDI ini. Dokumen mungkin miring 90, 180, atau 270 derajat: periksa seluruh orientasi dan baca dalam posisi tegak. Jangan mengarang. Kembalikan JSON saja dengan ownerName (nilai persis setelah label Nama pemilik), certificateNumber (nilai setelah label Nomor Sertifikat SLO, bukan Nomor Registrasi), nidi (Nomor Identitas Instalasi Tenaga Listrik), documentType (SLO, NIDI, atau UNKNOWN), confidence angka 0 sampai 1. Periksa kembali ketiga nilai. Gunakan string kosong hanya jika label benar-benar tidak ada.",
+        },
+        { inlineData: { mimeType: file.type || "application/pdf", data } },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseJsonSchema: {
+          type: "object",
+          properties: {
+            ownerName: { type: "string" },
+            certificateNumber: { type: "string" },
+            nidi: { type: "string" },
+            documentType: { type: "string", enum: ["SLO", "NIDI", "UNKNOWN"] },
+            confidence: { type: "number" },
+          },
+          required: [
+            "ownerName",
+            "certificateNumber",
+            "nidi",
+            "documentType",
+            "confidence",
+          ],
+        },
+      },
+    });
+    const parsed = JSON.parse(response.text || "{}");
+    return NextResponse.json(parsed);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Gemini gagal membaca dokumen.";
+    const quota = /quota|resource.exhausted|429/i.test(message);
+    return NextResponse.json(
+      {
+        error: quota
+          ? "Kuota Gemini hari ini telah habis. Coba lagi setelah kuota tersedia."
+          : message,
+        code: quota ? "GEMINI_QUOTA_EXHAUSTED" : "GEMINI_ERROR",
+      },
+      { status: quota ? 429 : 500 },
+    );
+  }
+}

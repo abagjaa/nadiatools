@@ -1,0 +1,1 @@
+export function recordHistory(tool:string,count:number,status='Berhasil'){if(typeof window==='undefined')return;try{const old=JSON.parse(localStorage.getItem('nadia-history')||'[]');old.unshift({id:crypto.randomUUID(),tool,count,status,createdAt:new Date().toISOString()});localStorage.setItem('nadia-history',JSON.stringify(old.slice(0,250)))}catch{}}
