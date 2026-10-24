@@ -4,18 +4,40 @@ import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 import { useMemo, useState } from "react";
 import PdfPreviewModal from "../../components/PdfPreviewModal";
+import {
+  certificateStartsAmbiguous,
+  formatCertificateNumber,
+  parseCertificateText,
+  pdfTextItems,
+} from "../../lib/certificate-parser";
 
-type Output = { name: string; bytes: Uint8Array; pages: string };
+type Provider = "gemini" | "openai";
+type Output = {
+  name: string;
+  bytes: Uint8Array;
+  pages: string;
+  certificate: string;
+  owner: string;
+  source: "digital" | Provider | "manual" | "";
+  error?: string;
+};
+const clean = (value: string) =>
+  value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 export default function SplitPdf() {
   const [file, setFile] = useState<File | null>(null),
     [mode, setMode] = useState<"pages" | "ranges">("pages"),
     [ranges, setRanges] = useState("1-2, 3-4"),
+    [provider, setProvider] = useState<Provider>("openai"),
     [outputs, setOutputs] = useState<Output[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [previewItem, setPreviewItem] = useState<{
       data: BlobPart;
       filename: string;
+      outputIndex?: number;
     } | null>(null);
   const size = useMemo(
     () => (file ? `${(file.size / 1048576).toFixed(2)} MB` : ""),
@@ -46,6 +68,79 @@ export default function SplitPdf() {
       return Array.from({ length: b - a + 1 }, (_, i) => a + i - 1);
     });
   }
+  async function readDigital(file: File) {
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+    const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() })
+      .promise;
+    let text = "";
+    for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber++) {
+      const page = await doc.getPage(pageNumber);
+      const content = await page.getTextContent();
+      text +=
+        pdfTextItems(
+          content.items as Array<{ str?: string; hasEOL?: boolean }>,
+        ) + "\n";
+    }
+    doc.cleanup();
+    return text;
+  }
+  async function readWithAI(file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`/api/${provider}/extract-certificate`, {
+      method: "POST",
+      body: form,
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      ownerName?: string;
+      certificateNumber?: string;
+    };
+    if (!response.ok)
+      throw new Error(
+        data.error ||
+          `${provider === "gemini" ? "Gemini" : "OpenAI"} gagal membaca file.`,
+      );
+    return data;
+  }
+  async function identify(output: Output, fallbackName: string) {
+    const splitFile = new File([output.bytes as BlobPart], fallbackName, {
+      type: "application/pdf",
+    });
+    try {
+      const text = await readDigital(splitFile);
+      const parsed = parseCertificateText(text);
+      let owner = parsed.owner,
+        certificate = parsed.certificate,
+        source: Output["source"] = "digital";
+      if (!owner || !certificate) {
+        const ai = await readWithAI(splitFile);
+        owner = ai.ownerName || "";
+        certificate = ai.certificateNumber || "";
+        source = provider;
+      }
+      owner = clean(owner).toUpperCase();
+      certificate = formatCertificateNumber(clean(certificate));
+      if (!owner || !certificate)
+        throw new Error("Nomor Sertifikat atau Nama Pemilik tidak ditemukan.");
+      return {
+        ...output,
+        owner,
+        certificate,
+        source,
+        name: `${clean(certificate)}_${clean(owner)}.pdf`,
+      };
+    } catch (reason) {
+      return {
+        ...output,
+        error:
+          reason instanceof Error
+            ? reason.message
+            : "Data sertifikat tidak ditemukan.",
+      };
+    }
+  }
   async function process() {
     if (!file) return;
     setBusy(true);
@@ -71,9 +166,23 @@ export default function SplitPdf() {
           name: `${base}_${label}.pdf`,
           bytes: await doc.save(),
           pages: groups[i].map((n) => n + 1).join(", "),
+          certificate: "",
+          owner: "",
+          source: "",
         });
       }
-      setOutputs(made);
+      let next = 0;
+      const identified = [...made];
+      async function worker() {
+        while (next < made.length) {
+          const index = next++;
+          identified[index] = await identify(made[index], made[index].name);
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(4, made.length) }, () => worker()),
+      );
+      setOutputs(identified);
     } catch (e) {
       setError(e instanceof Error ? e.message : "PDF gagal diproses.");
     } finally {
@@ -96,6 +205,34 @@ export default function SplitPdf() {
     a.href = URL.createObjectURL(blob);
     a.download = `${file?.name.replace(/\.pdf$/i, "") || "hasil"}_dipisahkan.zip`;
     a.click();
+  }
+  function updateOutput(
+    index: number,
+    field: "certificate" | "owner" | "output",
+    value: string,
+  ) {
+    setOutputs((all) =>
+      all.map((output, current) => {
+        if (current !== index) return output;
+        const formatted =
+          field === "certificate"
+            ? formatCertificateNumber(value)
+            : field === "owner"
+              ? value.toUpperCase()
+              : value;
+        const updated = { ...output, [field]: formatted };
+        if (field === "certificate" || field === "owner")
+          updated.name =
+            clean(
+              [updated.certificate, updated.owner].filter(Boolean).join("_"),
+            ) + ".pdf";
+        if (updated.certificate && updated.owner) {
+          updated.source = "manual";
+          updated.error = "";
+        }
+        return updated;
+      }),
+    );
   }
   return (
     <div className="toolPage">
@@ -204,6 +341,31 @@ export default function SplitPdf() {
                     <small>Pisahkan kelompok dengan koma.</small>
                   </label>
                 )}
+                <section className="aiChoice">
+                  <div>
+                    <small>PEMBACA SERTIFIKAT</small>
+                    <b>Pilih AI untuk dokumen scan</b>
+                    <span>
+                      PDF teks digital tetap dibaca langsung tanpa AI.
+                    </span>
+                  </div>
+                  <div>
+                    <button
+                      className={provider === "gemini" ? "active" : ""}
+                      onClick={() => setProvider("gemini")}
+                      disabled={busy}
+                    >
+                      Gemini
+                    </button>
+                    <button
+                      className={provider === "openai" ? "active" : ""}
+                      onClick={() => setProvider("openai")}
+                      disabled={busy}
+                    >
+                      OpenAI
+                    </button>
+                  </div>
+                </section>
                 <div className="toolActions">
                   <Link href="/dashboard">Batal</Link>
                   <button className="button" onClick={process} disabled={busy}>
@@ -220,8 +382,8 @@ export default function SplitPdf() {
                 <small>REVIEW HASIL</small>
                 <h2>Periksa sebelum mengunduh</h2>
                 <p>
-                  {outputs.length} file berhasil dibuat. Anda dapat memperbaiki
-                  nama file.
+                  {outputs.length} file berhasil dibuat dan diberi nama dari isi
+                  sertifikat. Periksa hasil sebelum mengunduh.
                 </p>
               </div>
               <button className="secondary" onClick={() => setOutputs([])}>
@@ -244,12 +406,26 @@ export default function SplitPdf() {
                         )
                       }
                     />
+                    {o.error ? (
+                      <small className="outputError">⚠ {o.error}</small>
+                    ) : (
+                      <small>
+                        {o.source === "digital"
+                          ? "Teks digital"
+                          : o.source === "gemini"
+                            ? "Gemini"
+                            : o.source === "openai"
+                              ? "OpenAI"
+                              : "Manual"}
+                      </small>
+                    )}
                   </div>
                   <button
                     onClick={() =>
                       setPreviewItem({
                         data: o.bytes as BlobPart,
                         filename: o.name,
+                        outputIndex: i,
                       })
                     }
                     title="Preview PDF"
@@ -289,6 +465,54 @@ export default function SplitPdf() {
             data={previewItem.data}
             filename={previewItem.filename}
             onClose={() => setPreviewItem(null)}
+            manual={
+              previewItem.outputIndex !== undefined &&
+              outputs[previewItem.outputIndex]
+                ? (() => {
+                    const output = outputs[previewItem.outputIndex!];
+                    return {
+                      certificate: output.certificate,
+                      owner: output.owner,
+                      nidi: "",
+                      output: output.name,
+                    };
+                  })()
+                : undefined
+            }
+            onManualChange={(field, value) => {
+              const index = previewItem.outputIndex;
+              if (index === undefined || field === "nidi") return;
+              updateOutput(index, field, value);
+              const currentOutput = outputs[index];
+              const nextFilename =
+                field === "output"
+                  ? value
+                  : `${clean(
+                      [
+                        field === "certificate"
+                          ? formatCertificateNumber(value)
+                          : currentOutput.certificate,
+                        field === "owner"
+                          ? value.toUpperCase()
+                          : currentOutput.owner,
+                      ]
+                        .filter(Boolean)
+                        .join("_"),
+                    )}.pdf`;
+              setPreviewItem((current) =>
+                current ? { ...current, filename: nextFilename } : current,
+              );
+            }}
+            warning={(() => {
+              const output =
+                previewItem.outputIndex === undefined
+                  ? undefined
+                  : outputs[previewItem.outputIndex];
+              if (output?.error) return output.error;
+              if (output && certificateStartsAmbiguous(output.certificate))
+                return "Awalan Nomor Sertifikat terbaca I atau 1. Periksa kembali dokumen.";
+              return undefined;
+            })()}
           />
         )}
         {error && (
