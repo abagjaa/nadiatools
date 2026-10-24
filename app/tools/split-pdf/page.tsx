@@ -741,6 +741,39 @@ export default function SplitPdf() {
                 return "Awalan Nomor Sertifikat terbaca I atau 1. Periksa kembali dokumen.";
               return undefined;
             })()}
+            position={
+              previewItem.outputIndex !== undefined
+                ? `${previewItem.outputIndex + 1} dari ${outputs.length}`
+                : undefined
+            }
+            onPrevious={
+              previewItem.outputIndex !== undefined &&
+              previewItem.outputIndex > 0
+                ? () => {
+                    const index = previewItem.outputIndex! - 1;
+                    const output = outputs[index];
+                    setPreviewItem({
+                      data: output.bytes as BlobPart,
+                      filename: output.name,
+                      outputIndex: index,
+                    });
+                  }
+                : undefined
+            }
+            onNext={
+              previewItem.outputIndex !== undefined &&
+              previewItem.outputIndex < outputs.length - 1
+                ? () => {
+                    const index = previewItem.outputIndex! + 1;
+                    const output = outputs[index];
+                    setPreviewItem({
+                      data: output.bytes as BlobPart,
+                      filename: output.name,
+                      outputIndex: index,
+                    });
+                  }
+                : undefined
+            }
           />
         )}
         {error && (
