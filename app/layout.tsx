@@ -4,6 +4,7 @@ import "./globals.css";
 import "./workspace.css";
 import "./split-progress.css";
 import "./filename-pattern.css";
+import "./api-key-settings.css";
 import "./brand.css";
 import "./merge.css";
 import "./rename.css";

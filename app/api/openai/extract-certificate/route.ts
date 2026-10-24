@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { jwtVerify } from "jose";
 import OpenAI from "openai";
+import { readUserApiKeys, sessionUser } from "../../../lib/user-api-keys";
 type Result = {
   ownerName: string;
   certificateNumber: string;
@@ -31,17 +30,6 @@ const schema = {
     "confidence",
   ],
 };
-async function authorized() {
-  const token = (await cookies()).get("nadia_session")?.value,
-    secret = process.env.AUTH_SESSION_SECRET;
-  if (!token || !secret) return false;
-  try {
-    await jwtVerify(token, new TextEncoder().encode(secret));
-    return true;
-  } catch {
-    return false;
-  }
-}
 function suspicious(r: Result) {
   const number = /^[A-Z0-9]+(?:[.\/-][A-Z0-9]+){2,}$/i;
   return (
@@ -52,13 +40,15 @@ function suspicious(r: Result) {
   );
 }
 export async function POST(request: Request) {
-  if (!(await authorized()))
+  const user = await sessionUser();
+  if (!user)
     return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = (await readUserApiKeys(user)).openai;
   if (!apiKey)
     return NextResponse.json(
       {
-        error: "OpenAI API key belum diatur oleh Developer.",
+        error:
+          "OpenAI API key pribadi belum diatur. Buka Pengaturan untuk menambahkannya.",
         code: "OPENAI_NOT_CONFIGURED",
       },
       { status: 503 },

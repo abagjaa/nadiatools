@@ -1,19 +1,6 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { jwtVerify } from "jose";
 import { GoogleGenAI } from "@google/genai";
-
-async function authorized() {
-  const token = (await cookies()).get("nadia_session")?.value;
-  const secret = process.env.AUTH_SESSION_SECRET;
-  if (!token || !secret) return false;
-  try {
-    await jwtVerify(token, new TextEncoder().encode(secret));
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { readUserApiKeys, sessionUser } from "../../../lib/user-api-keys";
 
 function geminiErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error ?? "");
@@ -31,13 +18,15 @@ function geminiErrorMessage(error: unknown) {
 }
 
 export async function POST(request: Request) {
-  if (!(await authorized()))
+  const user = await sessionUser();
+  if (!user)
     return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (await readUserApiKeys(user)).gemini;
   if (!apiKey)
     return NextResponse.json(
       {
-        error: "Gemini API key belum diatur oleh Developer.",
+        error:
+          "Gemini API key pribadi belum diatur. Buka Pengaturan untuk menambahkannya.",
         code: "GEMINI_NOT_CONFIGURED",
       },
       { status: 503 },
