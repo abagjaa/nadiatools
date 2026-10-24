@@ -15,6 +15,21 @@ async function authorized() {
   }
 }
 
+function geminiErrorMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: { message?: unknown };
+      message?: unknown;
+    };
+    const nested = parsed.error?.message ?? parsed.message;
+    if (typeof nested === "string") return nested;
+  } catch {
+    // Pesan dari SDK tidak selalu berupa JSON.
+  }
+  return raw;
+}
+
 export async function POST(request: Request) {
   if (!(await authorized()))
     return NextResponse.json({ error: "Sesi tidak valid." }, { status: 401 });
@@ -74,17 +89,23 @@ export async function POST(request: Request) {
     const parsed = JSON.parse(response.text || "{}");
     return NextResponse.json(parsed);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Gemini gagal membaca dokumen.";
+    const message = geminiErrorMessage(error);
     const quota = /quota|resource.exhausted|429/i.test(message);
+    const unavailable = /high demand|unavailable|temporar|503/i.test(message);
     return NextResponse.json(
       {
         error: quota
           ? "Kuota Gemini hari ini telah habis. Coba lagi setelah kuota tersedia."
-          : message,
-        code: quota ? "GEMINI_QUOTA_EXHAUSTED" : "GEMINI_ERROR",
+          : unavailable
+            ? "Gemini sedang sibuk dan belum dapat membaca file ini. Coba lagi beberapa saat lagi."
+            : "Gemini gagal membaca dokumen. Coba lagi atau isi data secara manual melalui Preview.",
+        code: quota
+          ? "GEMINI_QUOTA_EXHAUSTED"
+          : unavailable
+            ? "GEMINI_UNAVAILABLE"
+            : "GEMINI_ERROR",
       },
-      { status: quota ? 429 : 500 },
+      { status: quota ? 429 : unavailable ? 503 : 502 },
     );
   }
 }

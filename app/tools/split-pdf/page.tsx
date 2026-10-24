@@ -33,6 +33,7 @@ export default function SplitPdf() {
     [provider, setProvider] = useState<Provider>("openai"),
     [outputs, setOutputs] = useState<Output[]>([]),
     [busy, setBusy] = useState(false),
+    [retrying, setRetrying] = useState<number | null>(null),
     [error, setError] = useState(""),
     [previewItem, setPreviewItem] = useState<{
       data: BlobPart;
@@ -86,23 +87,42 @@ export default function SplitPdf() {
     return text;
   }
   async function readWithAI(file: File) {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`/api/${provider}/extract-certificate`, {
-      method: "POST",
-      body: form,
-    });
-    const data = (await response.json()) as {
-      error?: string;
-      ownerName?: string;
-      certificateNumber?: string;
-    };
-    if (!response.ok)
-      throw new Error(
-        data.error ||
-          `${provider === "gemini" ? "Gemini" : "OpenAI"} gagal membaca file.`,
+    const selectedProvider = provider;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(
+        `/api/${selectedProvider}/extract-certificate`,
+        { method: "POST", body: form },
       );
-    return data;
+      const data = (await response.json()) as {
+        error?: unknown;
+        code?: string;
+        ownerName?: string;
+        certificateNumber?: string;
+      };
+      if (response.ok) return data;
+
+      const retryable =
+        selectedProvider === "gemini" &&
+        (response.status === 503 || data.code === "GEMINI_UNAVAILABLE");
+      if (retryable && attempt < 2) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, attempt === 0 ? 1200 : 2500),
+        );
+        continue;
+      }
+
+      const providerName = selectedProvider === "gemini" ? "Gemini" : "OpenAI";
+      const rawError = typeof data.error === "string" ? data.error : "";
+      const friendlyError = /high demand|unavailable|temporar|503/i.test(
+        rawError,
+      )
+        ? "Gemini sedang sibuk. Coba lagi beberapa saat, pilih OpenAI, atau isi manual melalui Preview."
+        : rawError || `${providerName} gagal membaca file.`;
+      throw new Error(friendlyError);
+    }
+    throw new Error("AI gagal membaca file setelah beberapa percobaan.");
   }
   async function identify(output: Output, fallbackName: string) {
     const splitFile = new File([output.bytes as BlobPart], fallbackName, {
@@ -180,13 +200,36 @@ export default function SplitPdf() {
         }
       }
       await Promise.all(
-        Array.from({ length: Math.min(4, made.length) }, () => worker()),
+        Array.from(
+          {
+            length: Math.min(provider === "gemini" ? 2 : 4, made.length),
+          },
+          () => worker(),
+        ),
       );
       setOutputs(identified);
     } catch (e) {
       setError(e instanceof Error ? e.message : "PDF gagal diproses.");
     } finally {
       setBusy(false);
+    }
+  }
+  async function retryOutput(index: number) {
+    const current = outputs[index];
+    if (!current) return;
+    setRetrying(index);
+    try {
+      const result = await identify(
+        { ...current, error: undefined },
+        current.name,
+      );
+      setOutputs((all) =>
+        all.map((output, currentIndex) =>
+          currentIndex === index ? result : output,
+        ),
+      );
+    } finally {
+      setRetrying(null);
     }
   }
   function download(o: Output) {
@@ -407,7 +450,34 @@ export default function SplitPdf() {
                       }
                     />
                     {o.error ? (
-                      <small className="outputError">⚠ {o.error}</small>
+                      <div
+                        className="outputErrorRow"
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <small className="outputError" style={{ flex: 1 }}>
+                          ⚠ {o.error}
+                        </small>
+                        <button
+                          className="retryOutput"
+                          onClick={() => retryOutput(i)}
+                          disabled={retrying !== null}
+                          style={{
+                            border: 0,
+                            background: "transparent",
+                            color: "var(--primary)",
+                            fontSize: 9,
+                            fontWeight: 800,
+                            cursor: retrying !== null ? "wait" : "pointer",
+                            opacity: retrying !== null ? 0.55 : 1,
+                          }}
+                        >
+                          {retrying === i ? "Mencoba…" : "Coba lagi"}
+                        </button>
+                      </div>
                     ) : (
                       <small>
                         {o.source === "digital"
