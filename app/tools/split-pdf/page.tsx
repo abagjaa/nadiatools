@@ -4,6 +4,9 @@ import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 import { useMemo, useState } from "react";
 import PdfPreviewModal from "../../components/PdfPreviewModal";
+import FilenamePattern, {
+  type FilenamePart,
+} from "../../components/FilenamePattern";
 import {
   certificateStartsAmbiguous,
   formatCertificateNumber,
@@ -48,6 +51,11 @@ export default function SplitPdf() {
     [ranges, setRanges] = useState("1-2, 3-4"),
     [provider, setProvider] = useState<Provider>("openai"),
     [outputs, setOutputs] = useState<Output[]>([]),
+    [nameOrder, setNameOrder] = useState<FilenamePart[]>([
+      "certificate",
+      "owner",
+    ]),
+    [nameSeparator, setNameSeparator] = useState("_"),
     [busy, setBusy] = useState(false),
     [progress, setProgress] = useState<ProcessProgress | null>(null),
     [savingFolder, setSavingFolder] = useState(false),
@@ -62,6 +70,41 @@ export default function SplitPdf() {
     () => (file ? `${(file.size / 1048576).toFixed(2)} MB` : ""),
     [file],
   );
+  function outputName(
+    certificate: string,
+    owner: string,
+    order = nameOrder,
+    separator = nameSeparator,
+  ) {
+    const values: Record<FilenamePart, string> = { certificate, owner };
+    return (
+      clean(
+        order
+          .map((part) => values[part])
+          .filter(Boolean)
+          .join(separator),
+      ) + ".pdf"
+    );
+  }
+  function changeNamePattern(order: FilenamePart[], separator: string) {
+    setNameOrder(order);
+    setNameSeparator(separator);
+    setOutputs((all) =>
+      all.map((output) =>
+        output.certificate && output.owner
+          ? {
+              ...output,
+              name: outputName(
+                output.certificate,
+                output.owner,
+                order,
+                separator,
+              ),
+            }
+          : output,
+      ),
+    );
+  }
   function choose(f?: File) {
     if (!f) return;
     if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf"))
@@ -167,7 +210,7 @@ export default function SplitPdf() {
         owner,
         certificate,
         source,
-        name: `${clean(certificate)}_${clean(owner)}.pdf`,
+        name: outputName(certificate, owner),
       };
     } catch (reason) {
       return {
@@ -384,10 +427,7 @@ export default function SplitPdf() {
               : value;
         const updated = { ...output, [field]: formatted };
         if (field === "certificate" || field === "owner")
-          updated.name =
-            clean(
-              [updated.certificate, updated.owner].filter(Boolean).join("_"),
-            ) + ".pdf";
+          updated.name = outputName(updated.certificate, updated.owner);
         if (updated.certificate && updated.owner) {
           updated.source = "manual";
           updated.error = "";
@@ -588,6 +628,11 @@ export default function SplitPdf() {
                 ← Ubah pengaturan
               </button>
             </div>
+            <FilenamePattern
+              order={nameOrder}
+              separator={nameSeparator}
+              onChange={changeNamePattern}
+            />
             <div className="outputList">
               {outputs.map((o, i) => (
                 <article key={i}>
@@ -715,18 +760,14 @@ export default function SplitPdf() {
               const nextFilename =
                 field === "output"
                   ? value
-                  : `${clean(
-                      [
-                        field === "certificate"
-                          ? formatCertificateNumber(value)
-                          : currentOutput.certificate,
-                        field === "owner"
-                          ? value.toUpperCase()
-                          : currentOutput.owner,
-                      ]
-                        .filter(Boolean)
-                        .join("_"),
-                    )}.pdf`;
+                  : outputName(
+                      field === "certificate"
+                        ? formatCertificateNumber(value)
+                        : currentOutput.certificate,
+                      field === "owner"
+                        ? value.toUpperCase()
+                        : currentOutput.owner,
+                    );
               setPreviewItem((current) =>
                 current ? { ...current, filename: nextFilename } : current,
               );

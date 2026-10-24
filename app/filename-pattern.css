@@ -1,0 +1,93 @@
+.filenamePattern {
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: minmax(170px, 0.75fr) 1.25fr;
+  gap: 16px 24px;
+  align-items: center;
+}
+.filenamePattern > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.filenamePattern small {
+  color: var(--primary);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+.filenamePattern b {
+  font-size: 11px;
+}
+.filenamePattern span {
+  color: var(--muted);
+  font-size: 8px;
+}
+.patternBuilder {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+.patternPartWrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.patternPart,
+.swapPattern,
+.patternBuilder select {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 9px 10px;
+  font-size: 9px;
+  font-weight: 750;
+}
+.patternPart {
+  cursor: grab;
+}
+.patternPart:active {
+  cursor: grabbing;
+}
+.patternBuilder select {
+  padding-inline: 8px;
+  color: var(--primary);
+}
+.swapPattern {
+  color: var(--primary);
+  cursor: pointer;
+}
+.patternExample {
+  grid-column: 1/-1;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.patternExample b {
+  color: var(--primary);
+}
+@media (max-width: 700px) {
+  .filenamePattern {
+    grid-template-columns: 1fr;
+  }
+  .patternBuilder {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .patternPart {
+    max-width: 145px;
+  }
+  .patternExample {
+    white-space: normal;
+  }
+}

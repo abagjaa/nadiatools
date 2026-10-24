@@ -3,6 +3,9 @@ import Link from "next/link";
 import JSZip from "jszip";
 import { useRef, useState } from "react";
 import PdfPreviewModal from "../../components/PdfPreviewModal";
+import FilenamePattern, {
+  type FilenamePart,
+} from "../../components/FilenamePattern";
 import {
   parseCertificateText,
   pdfTextItems,
@@ -32,11 +35,46 @@ export default function RenamePdf() {
   const [rows, setRows] = useState<Row[]>([]),
     [provider, setProvider] = useState<Provider>("openai"),
     [busy, setBusy] = useState(false),
+    [nameOrder, setNameOrder] = useState<FilenamePart[]>([
+      "certificate",
+      "owner",
+    ]),
+    [nameSeparator, setNameSeparator] = useState("_"),
     [error, setError] = useState(""),
     [confirmed, setConfirmed] = useState(false),
     [previewId, setPreviewId] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
   const folderRef = useRef<HTMLInputElement | null>(null);
+  function outputName(
+    certificate: string,
+    owner: string,
+    order = nameOrder,
+    separator = nameSeparator,
+  ) {
+    const values: Record<FilenamePart, string> = { certificate, owner };
+    return (
+      clean(
+        order
+          .map((part) => values[part])
+          .filter(Boolean)
+          .join(separator),
+      ) + ".pdf"
+    );
+  }
+  function changeNamePattern(order: FilenamePart[], separator: string) {
+    setNameOrder(order);
+    setNameSeparator(separator);
+    setRows((all) =>
+      all.map((row) =>
+        row.certificate && row.owner
+          ? {
+              ...row,
+              output: outputName(row.certificate, row.owner, order, separator),
+            }
+          : row,
+      ),
+    );
+  }
   function add(files: File[]) {
     const pdfs = files.filter(
       (f) =>
@@ -161,8 +199,7 @@ export default function RenamePdf() {
             throw new Error(
               `${provider === "gemini" ? "Gemini" : "OpenAI"} tidak menemukan Nama pemilik atau Nomor Sertifikat.`,
             );
-          const output =
-            clean([certificate, owner].filter(Boolean).join("_")) + ".pdf";
+          const output = outputName(certificate, owner);
           setRows((old) =>
             old.map((r) =>
               r.id === target.id
@@ -257,9 +294,7 @@ export default function RenamePdf() {
         if (row.id !== previewId) return row;
         const next = { ...row, [field]: formatted };
         if (field === "certificate" || field === "owner")
-          next.output =
-            clean([next.certificate, next.owner].filter(Boolean).join("_")) +
-            ".pdf";
+          next.output = outputName(next.certificate, next.owner);
         if (next.certificate.trim() && next.owner.trim()) {
           next.status = "ready";
           next.source = "manual";
@@ -388,6 +423,13 @@ export default function RenamePdf() {
                 </button>
               )}
             </div>
+            {rows.some((row) => row.status === "ready") && (
+              <FilenamePattern
+                order={nameOrder}
+                separator={nameSeparator}
+                onChange={changeNamePattern}
+              />
+            )}
             <div className="renameTable">
               {rows.map((row) => (
                 <article key={row.id} className={"renameRow " + row.status}>

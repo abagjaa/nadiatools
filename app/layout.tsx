@@ -3,6 +3,7 @@ import { Manrope } from "next/font/google";
 import "./globals.css";
 import "./workspace.css";
 import "./split-progress.css";
+import "./filename-pattern.css";
 import "./brand.css";
 import "./merge.css";
 import "./rename.css";
