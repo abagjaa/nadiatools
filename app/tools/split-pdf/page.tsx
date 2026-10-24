@@ -91,7 +91,9 @@ export default function SplitPdf() {
     setNameSeparator(separator);
     setOutputs((all) =>
       all.map((output) =>
-        output.certificate && output.owner
+        order.every((part) =>
+          part === "certificate" ? output.certificate : output.owner,
+        )
           ? {
               ...output,
               name: outputName(
@@ -428,7 +430,11 @@ export default function SplitPdf() {
         const updated = { ...output, [field]: formatted };
         if (field === "certificate" || field === "owner")
           updated.name = outputName(updated.certificate, updated.owner);
-        if (updated.certificate && updated.owner) {
+        if (
+          nameOrder.every((part) =>
+            part === "certificate" ? updated.certificate : updated.owner,
+          )
+        ) {
           updated.source = "manual";
           updated.error = "";
         }

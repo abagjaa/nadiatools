@@ -33,6 +33,33 @@
   gap: 7px;
   min-width: 0;
 }
+.patternControls {
+  display: grid;
+  gap: 9px;
+}
+.patternToggles {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.patternToggles button {
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 8px;
+  cursor: pointer;
+}
+.patternToggles button.active {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  background: var(--soft);
+  color: var(--primary);
+  font-weight: 800;
+}
+.patternToggles i {
+  font-style: normal;
+}
 .patternPartWrap {
   display: flex;
   align-items: center;
@@ -81,6 +108,10 @@
     grid-template-columns: 1fr;
   }
   .patternBuilder {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .patternToggles {
     justify-content: flex-start;
     flex-wrap: wrap;
   }

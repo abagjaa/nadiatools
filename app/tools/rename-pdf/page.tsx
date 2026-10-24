@@ -66,7 +66,9 @@ export default function RenamePdf() {
     setNameSeparator(separator);
     setRows((all) =>
       all.map((row) =>
-        row.certificate && row.owner
+        order.every((part) =>
+          part === "certificate" ? row.certificate : row.owner,
+        )
           ? {
               ...row,
               output: outputName(row.certificate, row.owner, order, separator),
@@ -295,7 +297,13 @@ export default function RenamePdf() {
         const next = { ...row, [field]: formatted };
         if (field === "certificate" || field === "owner")
           next.output = outputName(next.certificate, next.owner);
-        if (next.certificate.trim() && next.owner.trim()) {
+        if (
+          nameOrder.every((part) =>
+            part === "certificate"
+              ? next.certificate.trim()
+              : next.owner.trim(),
+          )
+        ) {
           next.status = "ready";
           next.source = "manual";
           next.confidence = 1;
