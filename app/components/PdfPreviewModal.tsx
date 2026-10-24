@@ -168,15 +168,7 @@ export default function PdfPreviewModal({
           </div>
         </header>
         <div className="previewBody">
-          <section
-            ref={pane}
-            className={`canvasPane ${dragging ? "dragging" : ""}`}
-            onWheel={wheel}
-            onMouseDown={startDrag}
-            onMouseMove={moveDrag}
-            onMouseUp={endDrag}
-            onMouseLeave={endDrag}
-          >
+          <div className="canvasStage">
             <div className="canvasTools">
               <button onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}>
                 −
@@ -211,10 +203,20 @@ export default function PdfPreviewModal({
                 </>
               )}
             </div>
-            {loading && <div className="previewLoading">Memuat preview…</div>}
-            {error && <div className="previewLoading">{error}</div>}
-            <canvas ref={canvas} />
-          </section>
+            <section
+              ref={pane}
+              className={`canvasPane ${dragging ? "dragging" : ""}`}
+              onWheel={wheel}
+              onMouseDown={startDrag}
+              onMouseMove={moveDrag}
+              onMouseUp={endDrag}
+              onMouseLeave={endDrag}
+            >
+              {loading && <div className="previewLoading">Memuat preview…</div>}
+              {error && <div className="previewLoading">{error}</div>}
+              <canvas ref={canvas} />
+            </section>
+          </div>
           {manual && onManualChange && (
             <aside className="manualPane">
               <small>KOREKSI MANUAL</small>
