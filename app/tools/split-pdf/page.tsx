@@ -21,6 +21,22 @@ type Output = {
   source: "digital" | Provider | "manual" | "";
   error?: string;
 };
+type ProcessProgress = {
+  phase: "opening" | "splitting" | "reading" | "finalizing";
+  current: number;
+  total: number;
+  message: string;
+};
+type WritableFile = {
+  write(data: Blob): Promise<void>;
+  close(): Promise<void>;
+};
+type FolderHandle = {
+  getFileHandle(
+    name: string,
+    options: { create: boolean },
+  ): Promise<{ createWritable(): Promise<WritableFile> }>;
+};
 const clean = (value: string) =>
   value
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
@@ -33,6 +49,8 @@ export default function SplitPdf() {
     [provider, setProvider] = useState<Provider>("openai"),
     [outputs, setOutputs] = useState<Output[]>([]),
     [busy, setBusy] = useState(false),
+    [progress, setProgress] = useState<ProcessProgress | null>(null),
+    [savingFolder, setSavingFolder] = useState(false),
     [retrying, setRetrying] = useState<number | null>(null),
     [error, setError] = useState(""),
     [previewItem, setPreviewItem] = useState<{
@@ -165,6 +183,12 @@ export default function SplitPdf() {
     if (!file) return;
     setBusy(true);
     setError("");
+    setProgress({
+      phase: "opening",
+      current: 0,
+      total: 1,
+      message: "Membuka dan memeriksa dokumen…",
+    });
     try {
       const source = await PDFDocument.load(await file.arrayBuffer());
       const total = source.getPageCount();
@@ -174,6 +198,12 @@ export default function SplitPdf() {
           : parseRanges(total);
       const base = file.name.replace(/\.pdf$/i, "");
       const made: Output[] = [];
+      setProgress({
+        phase: "splitting",
+        current: 0,
+        total: groups.length,
+        message: "Memisahkan PDF sesuai halaman…",
+      });
       for (let i = 0; i < groups.length; i++) {
         const doc = await PDFDocument.create();
         const copied = await doc.copyPages(source, groups[i]);
@@ -190,13 +220,33 @@ export default function SplitPdf() {
           owner: "",
           source: "",
         });
+        setProgress({
+          phase: "splitting",
+          current: i + 1,
+          total: groups.length,
+          message: `Membuat file ${i + 1} dari ${groups.length}…`,
+        });
       }
       let next = 0;
+      let completed = 0;
       const identified = [...made];
+      setProgress({
+        phase: "reading",
+        current: 0,
+        total: made.length,
+        message: `Membaca sertifikat dengan ${provider === "gemini" ? "Gemini" : "OpenAI"}…`,
+      });
       async function worker() {
         while (next < made.length) {
           const index = next++;
           identified[index] = await identify(made[index], made[index].name);
+          completed += 1;
+          setProgress({
+            phase: "reading",
+            current: completed,
+            total: made.length,
+            message: `Memeriksa nama file ${completed} dari ${made.length}…`,
+          });
         }
       }
       await Promise.all(
@@ -207,11 +257,18 @@ export default function SplitPdf() {
           () => worker(),
         ),
       );
+      setProgress({
+        phase: "finalizing",
+        current: made.length,
+        total: made.length,
+        message: "Menyiapkan hasil untuk diperiksa…",
+      });
       setOutputs(identified);
     } catch (e) {
       setError(e instanceof Error ? e.message : "PDF gagal diproses.");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
   async function retryOutput(index: number) {
@@ -240,14 +297,76 @@ export default function SplitPdf() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  function downloadEntries() {
+    const used = new Map<string, number>();
+    return outputs.map((output) => {
+      const key = output.name.toLocaleLowerCase("id-ID");
+      const occurrence = (used.get(key) || 0) + 1;
+      used.set(key, occurrence);
+      if (occurrence === 1) return { ...output, downloadName: output.name };
+      const extensionIndex = output.name.toLowerCase().lastIndexOf(".pdf");
+      const base =
+        extensionIndex >= 0
+          ? output.name.slice(0, extensionIndex)
+          : output.name;
+      return { ...output, downloadName: `${base} (${occurrence}).pdf` };
+    });
+  }
   async function zip() {
     const z = new JSZip();
-    outputs.forEach((o) => z.file(o.name, o.bytes));
+    downloadEntries().forEach((output) =>
+      z.file(output.downloadName, output.bytes),
+    );
     const blob = await z.generateAsync({ type: "blob" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${file?.name.replace(/\.pdf$/i, "") || "hasil"}_dipisahkan.zip`;
     a.click();
+  }
+  function downloadConfirmed() {
+    const confirmation = document.getElementById(
+      "confirmed",
+    ) as HTMLInputElement;
+    if (!confirmation?.checked) {
+      setError("Centang konfirmasi sebelum mengunduh.");
+      return false;
+    }
+    return true;
+  }
+  async function folder() {
+    if (!downloadConfirmed()) return;
+    const browserWindow = window as typeof window & {
+      showDirectoryPicker?: () => Promise<FolderHandle>;
+    };
+    if (!browserWindow.showDirectoryPicker) {
+      setError(
+        "Download Folder belum didukung browser ini. Gunakan Chrome desktop terbaru atau Download ZIP.",
+      );
+      return;
+    }
+    setSavingFolder(true);
+    setError("");
+    try {
+      const directory = await browserWindow.showDirectoryPicker();
+      for (const output of downloadEntries()) {
+        const handle = await directory.getFileHandle(output.downloadName, {
+          create: true,
+        });
+        const writable = await handle.createWritable();
+        await writable.write(
+          new Blob([output.bytes as BlobPart], { type: "application/pdf" }),
+        );
+        await writable.close();
+      }
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError")
+        return;
+      setError(
+        "Folder tidak dapat disimpan. Coba pilih folder lain atau gunakan ZIP.",
+      );
+    } finally {
+      setSavingFolder(false);
+    }
   }
   function updateOutput(
     index: number,
@@ -415,6 +534,42 @@ export default function SplitPdf() {
                     {busy ? "Memproses…" : "Proses dan review →"}
                   </button>
                 </div>
+                {busy && progress && (
+                  <div
+                    className="processProgress"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="processIllustration" aria-hidden="true">
+                      <span className="processPaper backPaper" />
+                      <span className="processPaper frontPaper">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      <span className="scanLine" />
+                      <b>
+                        {Math.round((progress.current / progress.total) * 100)}%
+                      </b>
+                    </div>
+                    <div className="processCopy">
+                      <small>PROSES SEDANG BERJALAN</small>
+                      <strong>{progress.message}</strong>
+                      <span>
+                        {progress.phase === "opening"
+                          ? "Menyiapkan dokumen"
+                          : `${progress.current} dari ${progress.total} selesai`}
+                      </span>
+                      <div className="progressTrack">
+                        <i
+                          style={{
+                            width: `${Math.max(4, (progress.current / progress.total) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
           </>
@@ -515,18 +670,21 @@ export default function SplitPdf() {
                 <input type="checkbox" id="confirmed" /> Nama dan pembagian
                 halaman sudah benar
               </label>
-              <button
-                className="button"
-                onClick={() => {
-                  const c = document.getElementById(
-                    "confirmed",
-                  ) as HTMLInputElement;
-                  if (c?.checked) zip();
-                  else setError("Centang konfirmasi sebelum mengunduh.");
-                }}
-              >
-                Download ZIP
-              </button>
+              <div className="downloadChoices">
+                <button
+                  className="secondary"
+                  onClick={folder}
+                  disabled={savingFolder}
+                >
+                  {savingFolder ? "Menyimpan…" : "Download Folder"}
+                </button>
+                <button
+                  className="button"
+                  onClick={() => downloadConfirmed() && zip()}
+                >
+                  Download ZIP
+                </button>
+              </div>
             </div>
           </section>
         )}

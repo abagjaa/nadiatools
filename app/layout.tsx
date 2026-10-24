@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import "./globals.css";
 import "./workspace.css";
+import "./split-progress.css";
 import "./brand.css";
 import "./merge.css";
 import "./rename.css";
